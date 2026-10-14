@@ -1,0 +1,5 @@
+project_id = "saidpaid"
+
+[functions.capture]
+# Requests must carry a Supabase JWT (the anon key for now, a user session once auth is added).
+verify_jwt = true
