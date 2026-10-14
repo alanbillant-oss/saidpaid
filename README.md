@@ -47,6 +47,8 @@ cp .env.example .env          # puis remplis les valeurs (voir ci-dessous)
 npm start                     # scanne le QR code avec Expo Go
 ```
 
+Pour essayer sans aucune clé : `npm run web:demo` (IA simulée par mots-clés, données démo 317 LAB, texte seulement).
+
 Sans backend configuré, l'app s'ouvre quand même (réglages, clients, grille, factures) mais la capture affiche un message d'erreur.
 
 ### Comptes et clés à créer

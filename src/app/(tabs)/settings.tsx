@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { Alert, Platform, ScrollView, Text, View } from 'react-native';
 import { Button, Card, Field, SectionTitle, styles } from '../../components/ui';
-import { isBackendConfigured } from '../../lib/api';
+import { isBackendConfigured, isDemoMode } from '../../lib/api';
 import { demoBusiness, demoClients, demoRateItems, demoRateOptions } from '../../lib/demo';
 import { useStore } from '../../lib/store';
 import type { Business } from '../../lib/types';
@@ -13,7 +13,8 @@ export default function SettingsScreen() {
 
   const confirm = (title: string, onYes: () => void) => {
     if (Platform.OS === 'web') {
-      if (window.confirm(title)) onYes();
+      // The hosted demo runs in a frame where confirm() is unavailable.
+      if (isDemoMode || window.confirm(title)) onYes();
       return;
     }
     Alert.alert(title, undefined, [

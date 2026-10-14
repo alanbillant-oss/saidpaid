@@ -10,7 +10,7 @@ import { useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { MissionCard } from '../../components/MissionCard';
 import { Button, colors, styles } from '../../components/ui';
-import { captureContext, isBackendConfigured, sendCapture } from '../../lib/api';
+import { captureContext, isBackendConfigured, isDemoMode, sendCapture } from '../../lib/api';
 import { formatMoney, todayISO } from '../../lib/money';
 import { type ChatEntry, type PendingClient, uid } from '../../lib/state';
 import { useStore } from '../../lib/store';
@@ -85,7 +85,14 @@ export default function CaptureScreen() {
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
         ListHeaderComponent={
           <View>
-            {!isBackendConfigured && (
+            {isDemoMode && (
+              <View style={{ backgroundColor: colors.accentSoft, padding: 12, borderRadius: 12, marginBottom: 12 }}>
+                <Text style={{ color: colors.accent }}>
+                  Demo mode: the AI is simulated with simple keyword matching and the 317 LAB demo rate card. Type your missions, voice needs the real backend.
+                </Text>
+              </View>
+            )}
+            {!isBackendConfigured && !isDemoMode && (
               <View style={{ backgroundColor: colors.warnSoft, padding: 12, borderRadius: 12, marginBottom: 12 }}>
                 <Text style={{ color: colors.warn }}>
                   The AI backend is not configured yet. See the README to add your Supabase URL and keys.

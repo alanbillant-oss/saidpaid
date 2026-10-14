@@ -1,5 +1,6 @@
 import { File } from 'expo-file-system';
 import { Platform } from 'react-native';
+import { demoExtract } from './demoExtract';
 import type { State } from './state';
 import type { CaptureResult, Pricing } from './types';
 
@@ -7,6 +8,9 @@ const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 export const isBackendConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+/** Demo mode: no backend, a simple keyword matcher stands in for Claude (web preview only). */
+export const isDemoMode = process.env.EXPO_PUBLIC_DEMO_MODE === '1' && !isBackendConfigured;
 
 const unitOf = (p: Pricing) => (p.kind === 'per_unit' || p.kind === 'tiers' ? p.unit : null);
 
@@ -45,6 +49,11 @@ export async function sendCapture(
   input: { text: string } | { audioUri: string },
   context: ReturnType<typeof captureContext>,
 ): Promise<CaptureResult> {
+  if (isDemoMode) {
+    if (!('text' in input)) throw new Error('Voice notes need the real AI backend. In this demo, type your missions instead.');
+    await new Promise((r) => setTimeout(r, 400));
+    return { transcript: input.text, items: demoExtract(input.text, context) };
+  }
   if (!isBackendConfigured) {
     throw new Error('Backend not configured. Copy .env.example to .env and fill in the Supabase URL and anon key.');
   }
