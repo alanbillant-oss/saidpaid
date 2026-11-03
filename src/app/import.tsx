@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
-import { BusinessSwitcher } from '../components/BusinessSwitcher';
+import { BusinessSwitcher, Chip } from '../components/BusinessSwitcher';
 import { Button, Card, colors, styles } from '../components/ui';
 import { isDemoMode, readFileBase64 } from '../lib/api';
 import { useT } from '../lib/i18n';
@@ -24,6 +24,7 @@ export default function ImportScreen() {
   const business = activeBusiness(state);
   const [files, setFiles] = useState<Picked[]>([]);
   const [done, setDone] = useState<string | null>(null);
+  const [unpaidAsPaid, setUnpaidAsPaid] = useState(true);
 
   const preview = useMemo(
     () =>
@@ -33,8 +34,9 @@ export default function ImportScreen() {
         business.id,
         business.currency,
         uid,
+        { unpaidAsPaid },
       ),
-    [files, state.clients, state.rateItems, state.invoices, business.id, business.currency],
+    [files, state.clients, state.rateItems, state.invoices, business.id, business.currency, unpaidAsPaid],
   );
 
   const pick = async () => {
@@ -65,6 +67,7 @@ export default function ImportScreen() {
     const lines = [
       t('Imported: {c} clients, {r} services, {i} invoices.', { c: preview.clients.length, r: preview.rateItems.length, i: preview.invoices.length }),
       preview.skipped ? t('Already in Saidpaid, skipped: {n}', { n: preview.skipped }) : '',
+      preview.drafts ? t('{n} drafts to finish in Invoices.', { n: preview.drafts }) : '',
       preview.lastNumber ? t('Numbering continues after {n}.', { n: preview.lastNumber }) : '',
     ];
     setDone(lines.filter(Boolean).join('\n'));
@@ -114,6 +117,15 @@ export default function ImportScreen() {
             {t('Ready: {c} clients, {r} services, {i} invoices.', { c: preview.clients.length, r: preview.rateItems.length, i: preview.invoices.length })}
           </Text>
           {preview.skipped > 0 && <Text style={[styles.muted, { marginTop: 4 }]}>{t('Already in Saidpaid, skipped: {n}', { n: preview.skipped })}</Text>}
+          {preview.drafts > 0 && <Text style={[styles.muted, { marginTop: 4 }]}>{t('{n} drafts to finish in Invoices.', { n: preview.drafts })}</Text>}
+          {preview.voided > 0 && (
+            <Text style={[styles.muted, { marginTop: 4 }]}>{t('{n} corrected invoices kept as cancelled, outside the totals.', { n: preview.voided })}</Text>
+          )}
+          <Text style={[styles.label, { marginTop: 10 }]}>{t('Invoices with no payment date')}</Text>
+          <View style={[styles.row, { flexWrap: 'wrap' }]}>
+            <Chip label={t('Already paid')} active={unpaidAsPaid} onPress={() => setUnpaidAsPaid(true)} />
+            <Chip label={t('Still to be paid')} active={!unpaidAsPaid} onPress={() => setUnpaidAsPaid(false)} />
+          </View>
           {preview.lastNumber && <Text style={[styles.muted, { marginTop: 4 }]}>{t('Numbering continues after {n}.', { n: preview.lastNumber })}</Text>}
           <View style={{ marginTop: 10 }}>
             <Button title={t('Import everything')} onPress={run} disabled={!total} />

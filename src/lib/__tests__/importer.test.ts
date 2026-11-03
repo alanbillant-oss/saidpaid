@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { base64ToBytes, buildImport, classify, decodeCsvBytes, parseAmount, parseCsv, parseDate, toRows } from '../importer';
-import { nextInvoiceNumber } from '../invoice';
+import { detectNumberTemplate, nextInvoiceNumber } from '../invoice';
 
 let n = 0;
 const newId = (p: string) => `${p}${++n}`;
@@ -33,6 +33,7 @@ describe('importer', () => {
   it('reads UTF-8 and Windows-1252 files', () => {
     expect(decodeCsvBytes(new TextEncoder().encode('Désignation;Prix'))).toBe('Désignation;Prix');
     expect(decodeCsvBytes(new Uint8Array([0x44, 0xe9, 0x80]))).toBe('Dé€');
+    expect(decodeCsvBytes(base64ToBytes('data:text/csv;base64,' + btoa('a;b')))).toBe('a;b');
     expect(decodeCsvBytes(base64ToBytes(btoa(String.fromCharCode(...new TextEncoder().encode('Échéance;Total €')))))).toBe('Échéance;Total €');
   });
 
@@ -65,5 +66,57 @@ describe('importer', () => {
     const again = buildImport([file(CLIENTS)], { clients: first.clients, rateItems: [], invoices: [] }, 'b1', 'EUR', newId);
     expect(again.clients).toHaveLength(0);
     expect(again.skipped).toBe(2);
+  });
+
+  // Same columns as facture.net's exports (made-up data).
+  const FN_COMPANIES = `Nom;Numéro d'entreprise;Code d'activité;Numéro de TVA;Adresse;Complément d'adresse;Code postal;Ville;Pays;Numéro(s) de téléphone;Email;Mots clés;Site internet;Notes;Langue
+ACME STUDIO;404 833 048 00012;"";FR83404833048;1 rue de Paris;"";06000;NICE;France;"";"";"";"";"";Français
+Lagon Bleu;"";"";"";2 rue du Port;"";97200;Fort-de-France;Martinique;"";"";"";"";"";Français
+`;
+  const FN_CONTACTS = `Prénom;Nom de famille;Société;Fonction;Adresse email;Adresse;Complément d'adresse;Code postal;Ville;Pays;Numéro(s) de téléphone;Mots clés;Date de création;Date de dernière facture;Notes;Langue
+Marie;Durand;ACME STUDIO;CEO;marie@acme.example;"";"";06000;NICE;France;"";"";02/09/2026;;"";Français
+Paul;Martin;;"";paul@example.com;"";"";75011;Paris;France;"";"";02/09/2026;;"";Français
+`;
+  const FN_INVOICES = `Nature;Numéro;Client;Société;Montant HT;Montant TVA;Débours;Montant TTC;Devise;Date;Encaissé le;Conditions de règlement;Mode de règlement;Intérêts de retard;Statut;Mots clés
+Facture;F2600003;Marie Durand;ACME STUDIO;1590,0;0,0;0,0;1590,0;€;07/07/2026;;30 jours;Virement bancaire;;Finalisé;""
+Facture;F2600002;Marie Durand;ACME STUDIO;1590,0;0,0;0,0;1590,0;€;07/07/2026;;30 jours;Virement bancaire;;Rectifié;""
+Facture;F2600001;Paul Martin;;390,0;0,0;0,0;390,0;€;27/06/2026;28/06/2026;45 jours fin de mois;Virement bancaire;;Finalisé;""
+Facture;Provisoire;Paul Martin;;112,5;0,0;0,0;112,5;€;;;30 jours;Virement bancaire;;Provisoire;""
+Facture;F2500009;;Lagon Bleu;250,0;0,0;0,0;250,0;€;20/12/2025;;30 jours;Virement bancaire;;Finalisé;""
+Total Euro;;;;3932,5;0,0;0,0;3932,5;€;;;;;;;
+`;
+
+  it('imports facture.net exports: companies, contacts, corrected invoices, drafts and F26xxxxx numbers', () => {
+    const files = [file(FN_CONTACTS), file(FN_COMPANIES), file(FN_INVOICES)];
+    expect(files.map((f) => f.kind)).toEqual(['clients', 'clients', 'invoices']);
+    const out = buildImport(files, { clients: [], rateItems: [], invoices: [] }, 'b1', 'EUR', newId);
+    expect(out.clients.map((c) => [c.name, c.siren, c.email, c.aliases])).toEqual([
+      ['ACME STUDIO', '404833048', 'marie@acme.example', []],
+      ['Lagon Bleu', undefined, undefined, []],
+      ['Paul Martin', undefined, 'paul@example.com', []],
+    ]);
+    expect(out.clients[1].address).toBe('2 rue du Port\n97200 Fort-de-France\nMartinique');
+    const acme = out.clients[0].id;
+    expect(out.invoices.map((i) => [i.number, i.status, i.clientId === acme])).toEqual([
+      ['F2600003', 'sent', true],
+      ['F2600002', 'void', true],
+      ['F2600001', 'paid', false],
+      [null, 'draft', false],
+      ['F2500009', 'sent', false],
+    ]);
+    expect(out.invoices[2].dueDate).toBe('2026-08-31'); // 45 jours fin de mois
+    expect([out.drafts, out.voided]).toEqual([1, 1]);
+    expect(out.numberTemplate).toBe('F{yy}{seq:5}');
+    expect(out.lastNumber).toBe('F2600003');
+    expect(nextInvoiceNumber(out.invoices, 'F', 2026, out.numberTemplate!)).toBe('F2600004');
+    expect(nextInvoiceNumber(out.invoices, 'F', 2027, out.numberTemplate!)).toBe('F2700001');
+    const paid = buildImport(files, { clients: [], rateItems: [], invoices: [] }, 'b1', 'EUR', newId, { unpaidAsPaid: true });
+    expect(paid.invoices.map((i) => i.status)).toEqual(['paid', 'void', 'paid', 'draft', 'paid']);
+  });
+
+  it('detects the usual numbering patterns', () => {
+    expect(detectNumberTemplate([{ number: 'SP-2026-0007', year: 2026 }])).toBe('SP-{year}-{seq:4}');
+    expect(detectNumberTemplate([{ number: 'F2600038', year: 2026 }])).toBe('F{yy}{seq:5}');
+    expect(detectNumberTemplate([{ number: 'INV-12', year: 2026 }])).toBe('INV-{seq:2}');
   });
 });

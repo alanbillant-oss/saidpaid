@@ -78,6 +78,7 @@ export type Action =
   | { type: 'updateInvoice'; id: string; patch: Partial<Invoice> }
   | { type: 'issueInvoice'; id: string; today: string }
   | { type: 'markPaid'; id: string }
+  | { type: 'markUnpaid'; id: string }
   | { type: 'deleteDraft'; id: string };
 
 export function activeBusiness(state: State): Business {
@@ -327,6 +328,8 @@ export function reducer(state: State, action: Action): State {
     }
     case 'markPaid':
       return { ...state, invoices: state.invoices.map((i) => (i.id === action.id && i.status === 'sent' ? { ...i, status: 'paid' } : i)) };
+    case 'markUnpaid':
+      return { ...state, invoices: state.invoices.map((i) => (i.id === action.id && i.status === 'paid' ? { ...i, status: 'sent' } : i)) };
     case 'deleteDraft': {
       const inv = state.invoices.find((i) => i.id === action.id);
       if (!inv || inv.status !== 'draft') return state;

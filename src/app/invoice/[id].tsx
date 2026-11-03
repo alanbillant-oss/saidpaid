@@ -135,6 +135,7 @@ export default function InvoiceScreen() {
         <Button title={t('Share PDF')} variant="secondary" onPress={exportPdf} loading={sharing} />
         {editable && <Button title={t('Approve and issue')} onPress={issue} disabled={!inv.lines.length} />}
         {inv.status === 'sent' && <Button title={t('Mark as paid')} onPress={() => dispatch({ type: 'markPaid', id: inv.id })} />}
+        {inv.status === 'paid' && <Button variant="secondary" title={t('Not paid yet')} onPress={() => dispatch({ type: 'markUnpaid', id: inv.id })} />}
         {editable && (
           <Button
             title={t('Delete draft')}

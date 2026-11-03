@@ -47,31 +47,48 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((x) => x.trim() !== ''));
 }
 
+/** Column header -> lowercase words without accents or punctuation ("Encaissé le" -> "encaisse le"). */
+export function normalizeHeader(h: string): string {
+  return h
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function toRows(table: string[][]): Row[] {
   const [header, ...body] = table;
   if (!header) return [];
-  const keys = header.map((h) => normalize(h));
+  const keys = header.map(normalizeHeader);
   return body.map((r) => Object.fromEntries(keys.map((k, i) => [k, (r[i] ?? '').trim()])));
 }
 
 // Column synonyms, already normalized (lowercase, no accents, no punctuation).
 const COLS = {
   name: ['raison sociale', 'societe', 'entreprise', 'nom client', 'client', 'nom', 'company', 'name', 'denomination'],
+  company: ['societe', 'raison sociale', 'entreprise', 'company', 'denomination'],
+  contact: ['client', 'nom client', 'contact', 'customer'],
   firstName: ['prenom', 'first name'],
-  email: ['email', 'e mail', 'mail', 'adresse email', 'courriel'],
+  lastName: ['nom de famille', 'last name', 'surname'],
+  email: ['email', 'e mail', 'mail', 'adresse email', 'adresse e mail', 'courriel'],
   address: ['adresse', 'adresse 1', 'adresse ligne 1', 'rue', 'address', 'address line 1'],
-  address2: ['adresse 2', 'complement adresse', 'complement', 'address line 2'],
+  address2: ['complement d adresse', 'adresse 2', 'complement adresse', 'complement', 'address line 2'],
   zip: ['code postal', 'cp', 'postal code', 'zip'],
   city: ['ville', 'city', 'commune'],
   country: ['pays', 'country'],
-  siren: ['siren', 'siret', 'n siret', 'numero siret', 'n siren'],
-  vat: ['tva intracommunautaire', 'n tva intracommunautaire', 'numero tva', 'n tva', 'tva intra', 'vat number', 'vat'],
+  siren: ['siren', 'siret', 'n siret', 'numero siret', 'n siren', 'numero d entreprise', 'company number'],
+  vat: ['numero de tva', 'tva intracommunautaire', 'n tva intracommunautaire', 'numero tva', 'n tva', 'tva intra', 'vat number', 'vat'],
   itemName: ['designation', 'libelle', 'article', 'produit', 'prestation', 'description', 'intitule', 'item', 'product'],
   price: ['prix unitaire ht', 'prix ht', 'pu ht', 'prix unitaire', 'prix', 'tarif', 'unit price', 'price', 'montant ht'],
   unit: ['unite', 'unit'],
+  nature: ['nature', 'type'],
   number: ['numero', 'n facture', 'numero facture', 'facture', 'reference', 'invoice number', 'number', 'n'],
   date: ['date', 'date facture', 'date emission', 'date d emission', 'invoice date'],
   due: ['echeance', 'date echeance', 'date d echeance', 'due date'],
+  terms: ['conditions de reglement', 'conditions de paiement', 'payment terms'],
+  paidOn: ['encaisse le', 'date d encaissement', 'date de paiement', 'paye le', 'paid on'],
   totalHt: ['total ht', 'montant ht', 'ht', 'net', 'subtotal'],
   totalTtc: ['total ttc', 'montant ttc', 'ttc', 'total'],
   status: ['statut', 'etat', 'status', 'payee', 'paye', 'reglee'],
@@ -130,9 +147,30 @@ export type ImportPreview = {
   numberTemplate: string | null;
   lastNumber: string | null;
   skipped: number;
+  /** Unnumbered drafts ("provisoire") imported as drafts. */
+  drafts: number;
+  /** Corrected or cancelled invoices: kept for their number, left out of the totals. */
+  voided: number;
 };
 
 type Existing = { clients: Client[]; rateItems: RateItem[]; invoices: Invoice[] };
+
+export type ImportOptions = {
+  /** Most tools (facture.net included) leave "paid on" empty when payments are not tracked there. */
+  unpaidAsPaid?: boolean;
+};
+
+/** "30 jours", "45 jours fin de mois", "à réception" -> due date. */
+export function dueDateFrom(issue: string, terms: string): string {
+  const t = normalize(terms);
+  const days = Number(t.match(/(\d+)\s*j/)?.[1] ?? t.match(/(\d+)/)?.[1] ?? 0);
+  const d = new Date(issue + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  if (/fin de mois|end of month/.test(t)) d.setUTCMonth(d.getUTCMonth() + 1, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+const NOT_FR = (country: string) => !!country && !/^(france|fr)$/i.test(country.trim());
 
 export function buildImport(
   files: { kind: FileKind; rows: Row[] }[],
@@ -140,39 +178,53 @@ export function buildImport(
   businessId: string,
   currency: string,
   newId: (prefix: string) => string,
+  options: ImportOptions = {},
 ): ImportPreview {
-  const out: ImportPreview = { clients: [], rateItems: [], invoices: [], numberTemplate: null, lastNumber: null, skipped: 0 };
+  const out: ImportPreview = { clients: [], rateItems: [], invoices: [], numberTemplate: null, lastNumber: null, skipped: 0, drafts: 0, voided: 0 };
   const knownClient = (name: string, siren?: string) =>
     [...existing.clients, ...out.clients].find((c) => (siren && c.siren === siren) || normalize(c.name) === normalize(name));
 
-  // Clients first, so invoices can point at them.
-  for (const f of files.filter((x) => x.kind === 'clients')) {
+  // Clients first, so invoices can point at them. Files with company numbers go first, so a
+  // contact file (people, with the company they work for) only adds what is missing.
+  const clientFiles = files
+    .filter((x) => x.kind === 'clients')
+    .sort((a, b) => Number(!!findColumn(Object.keys(b.rows[0] ?? {}), 'siren')) - Number(!!findColumn(Object.keys(a.rows[0] ?? {}), 'siren')));
+  for (const f of clientFiles) {
     const h = Object.keys(f.rows[0] ?? {});
     const col = (field: Col) => findColumn(h, field);
     for (const r of f.rows) {
       const get = (field: Col) => {
         const c = col(field);
-        return c ? r[c] : '';
+        return c ? (r[c] ?? '').trim() : '';
       };
-      const name = [get('name'), get('name') ? '' : get('firstName')].filter(Boolean).join(' ').trim();
+      const person = [get('firstName'), get('lastName')].filter(Boolean).join(' ');
+      const name = (get('company') || get('name') || person).trim();
       if (!name) continue;
-      const siren = get('siren').replace(/\D/g, '').slice(0, 9) || undefined;
+      const digits = get('siren').replace(/\D/g, '');
+      const siren = digits.length >= 9 ? digits.slice(0, 9) : undefined;
+      const country = get('country');
+      const address = [get('address'), get('address2'), [get('zip'), get('city')].filter(Boolean).join(' '), NOT_FR(country) ? country : '']
+        .filter(Boolean)
+        .join('\n');
+      const email = get('email') || undefined;
+      const vatNumber = get('vat').replace(/\s/g, '') || undefined;
+
+      const fresh = out.clients.find((c) => (siren && c.siren === siren) || normalize(c.name) === normalize(name));
+      if (fresh) {
+        // Same client seen again in this import (company + its contact): fill the gaps.
+        Object.assign(fresh, {
+          email: fresh.email ?? email,
+          address: fresh.address ?? (address || undefined),
+          siren: fresh.siren ?? siren,
+          vatNumber: fresh.vatNumber ?? vatNumber,
+        });
+        continue;
+      }
       if (knownClient(name, siren)) {
         out.skipped++;
         continue;
       }
-      const address = [get('address'), get('address2'), [get('zip'), get('city')].filter(Boolean).join(' '), get('country')]
-        .filter(Boolean)
-        .join('\n');
-      out.clients.push({
-        id: newId('c_'),
-        name,
-        aliases: [],
-        email: get('email') || undefined,
-        address: address || undefined,
-        siren: siren && siren.length === 9 ? siren : undefined,
-        vatNumber: get('vat') || undefined,
-      });
+      out.clients.push({ id: newId('c_'), name, aliases: person && person !== name ? [person] : [], email, address: address || undefined, siren, vatNumber });
     }
   }
 
@@ -206,47 +258,69 @@ export function buildImport(
     for (const r of f.rows) {
       const get = (field: Col) => {
         const c = col(field);
-        return c ? r[c] : '';
+        return c ? (r[c] ?? '').trim() : '';
       };
-      const number = get('number');
+      const nature = normalize(get('nature'));
+      if (nature && !/facture|invoice/.test(nature)) {
+        // Credit notes and quotes have their own numbering: not imported as invoices.
+        if (/avoir|credit/.test(nature)) out.skipped++;
+        continue;
+      }
+      const statusRaw = normalize(get('status'));
+      const isDraft = /provisoire|brouillon|draft/.test(statusRaw) || normalize(get('number')) === 'provisoire';
+      const number = isDraft ? null : get('number');
       const date = parseDate(get('date'));
       const ht = parseAmount(get('totalHt'));
       const ttc = parseAmount(get('totalTtc'));
       const net = ht ?? ttc;
-      if (!number || !date || net == null) continue;
-      if ([...existing.invoices, ...out.invoices].some((i) => i.businessId === businessId && i.number === number)) {
-        out.skipped++;
-        continue;
-      }
-      const clientName = get('name') || '—';
+      if (net == null || (!isDraft && (!number || !date))) continue;
+
+      const clientName = get('company') || get('contact') || get('name') || '—';
       let client = knownClient(clientName);
       if (!client) {
         client = { id: newId('c_'), name: clientName, aliases: [] };
         out.clients.push(client);
       }
+      const clientId = client.id;
+      const duplicate = [...existing.invoices, ...out.invoices].some((i) =>
+        i.businessId !== businessId
+          ? false
+          : number
+            ? i.number === number
+            : i.status === 'draft' && i.clientId === clientId && i.lines[0]?.unitPrice === net && i.lines[0]?.description === 'Facture importée',
+      );
+      if (duplicate) {
+        out.skipped++;
+        continue;
+      }
       const vatRate = ht && ttc && ttc > ht ? Math.round(((ttc - ht) / ht) * 1000) / 10 : 0;
-      const statusRaw = normalize(get('status'));
-      const paid = /pay|regl|acquit|paid|oui|yes|^1$/.test(statusRaw) && !/non|impay|unpaid|attente|retard/.test(statusRaw);
+      const paidOn = parseDate(get('paidOn'));
+      const voided = /rectifi|annul|cancel|void/.test(statusRaw);
+      const paidWord = /pay|regl|acquit|paid|encaiss/.test(statusRaw) && !/non|impay|unpaid|attente|retard/.test(statusRaw);
+      const status: Invoice['status'] = isDraft ? 'draft' : voided ? 'void' : paidOn || paidWord || options.unpaidAsPaid ? 'paid' : 'sent';
+      if (isDraft) out.drafts++;
+      if (voided) out.voided++;
       out.invoices.push({
         id: newId('i_'),
         businessId,
         number,
-        clientId: client.id,
-        issueDate: date,
-        dueDate: parseDate(get('due')) ?? date,
+        clientId,
+        issueDate: isDraft ? null : date,
+        dueDate: isDraft ? null : parseDate(get('due')) ?? (get('terms') && date ? dueDateFrom(date, get('terms')) : date),
         lines: [{ description: 'Facture importée', quantity: 1, unitPrice: net }],
         discountPercent: 0,
         vatRate,
         currency,
-        status: paid ? 'paid' : 'sent',
+        status,
       });
     }
   }
 
-  const numbers = out.invoices.map((i) => ({ number: i.number as string, year: Number((i.issueDate ?? '').slice(0, 4)) }));
+  const numbered = out.invoices.filter((i) => i.number);
+  const numbers = numbered.map((i) => ({ number: i.number as string, year: Number((i.issueDate ?? '').slice(0, 4)) }));
   out.numberTemplate = detectNumberTemplate(numbers);
   out.lastNumber =
-    [...out.invoices].sort((a, b) => (a.issueDate ?? '').localeCompare(b.issueDate ?? '') || (a.number ?? '').localeCompare(b.number ?? '', undefined, { numeric: true })).at(-1)
+    [...numbered].sort((a, b) => (a.issueDate ?? '').localeCompare(b.issueDate ?? '') || (a.number ?? '').localeCompare(b.number ?? '', undefined, { numeric: true })).at(-1)
       ?.number ?? null;
   return out;
 }
@@ -270,7 +344,8 @@ export function decodeCsvBytes(bytes: Uint8Array): string {
 
 export function base64ToBytes(b64: string): Uint8Array {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  const clean = b64.replace(/[^A-Za-z0-9+/]/g, '');
+  // Some pickers hand back a data URL ("data:text/csv;base64,...") instead of bare base64.
+  const clean = b64.replace(/^data:[^,]*,/, '').replace(/[^A-Za-z0-9+/]/g, '');
   const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
   let o = 0;
   for (let i = 0; i < clean.length; i += 4) {

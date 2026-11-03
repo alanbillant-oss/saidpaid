@@ -103,7 +103,8 @@ export type Mission = {
 
 export type InvoiceLine = { description: string; quantity: number; unitPrice: number; missionId?: string };
 
-export type InvoiceStatus = 'draft' | 'sent' | 'paid';
+/** void: cancelled or corrected ("rectifiée"). It keeps its number so the sequence stays whole. */
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'void';
 
 export type Invoice = {
   id: string;

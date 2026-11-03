@@ -36,6 +36,7 @@ export default function InvoicesScreen() {
     { title: 'Drafts', items: invoices.filter((i) => i.status === 'draft') },
     { title: 'Sent', items: sent },
     { title: 'Paid', items: paid },
+    { title: 'Cancelled', items: invoices.filter((i) => i.status === 'void') },
   ];
 
   return (
