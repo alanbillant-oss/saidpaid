@@ -1,10 +1,12 @@
 import { router } from 'expo-router';
-import { Alert, Platform, ScrollView, Text, View } from 'react-native';
-import { Button, Card, Field, SectionTitle, styles } from '../../components/ui';
+import { Alert, Linking, Platform, ScrollView, Text, View } from 'react-native';
+import { Button, Card, colors, Field, SectionTitle, styles } from '../../components/ui';
 import { isBackendConfigured, isDemoMode } from '../../lib/api';
 import { demoBusiness, demoClients, demoRateItems, demoRateOptions } from '../../lib/demo';
 import { useStore } from '../../lib/store';
 import type { Business } from '../../lib/types';
+import { pairLink } from '../../lib/whatsapp';
+import { isWhatsAppAvailable, useWhatsApp } from '../../lib/whatsappSync';
 
 export default function SettingsScreen() {
   const { state, dispatch } = useStore();
@@ -65,6 +67,9 @@ export default function SettingsScreen() {
         <Button variant="secondary" title={`Rate card (${state.rateItems.length})`} onPress={() => router.push('/rates')} />
       </View>
 
+      <SectionTitle>WhatsApp</SectionTitle>
+      <WhatsAppSection confirm={confirm} />
+
       <SectionTitle>App</SectionTitle>
       <Card>
         <Text style={styles.body}>AI backend: {isBackendConfigured ? 'connected' : 'not configured'}</Text>
@@ -83,5 +88,60 @@ export default function SettingsScreen() {
         <Button variant="danger" title="Erase all data" onPress={() => confirm('Erase all data on this device?', () => dispatch({ type: 'reset' }))} />
       </View>
     </ScrollView>
+  );
+}
+
+function WhatsAppSection({ confirm }: { confirm: (title: string, onYes: () => void) => void }) {
+  const { status, pairing, error, connect, disconnect, refresh } = useWhatsApp();
+
+  if (!isWhatsAppAvailable) {
+    return (
+      <Card>
+        <Text style={styles.muted}>Send voice notes on WhatsApp once the AI backend is set up.</Text>
+      </Card>
+    );
+  }
+
+  if (status.linked) {
+    return (
+      <View style={{ gap: 10 }}>
+        <Card>
+          <Text style={styles.body}>Connected{status.phone ? `: ${status.phone}` : ''}</Text>
+          <Text style={[styles.muted, { marginTop: 4 }]}>
+            Send a voice note or a message to the Saidpaid number. Your jobs show up here, priced with your rate card.
+          </Text>
+        </Card>
+        {!!error && <Text style={{ color: colors.danger }}>{error}</Text>}
+        <Button variant="secondary" title="Disconnect WhatsApp" onPress={() => confirm('Disconnect WhatsApp?', disconnect)} />
+      </View>
+    );
+  }
+
+  if (pairing) {
+    const link = pairLink(pairing.number, pairing.code);
+    return (
+      <View style={{ gap: 10 }}>
+        <Card>
+          <Text style={styles.muted}>Send this code to the Saidpaid number on WhatsApp (valid 15 minutes):</Text>
+          <Text selectable style={{ fontSize: 28, fontWeight: '700', letterSpacing: 2, marginTop: 8, color: colors.text }}>
+            {pairing.code}
+          </Text>
+          {!!pairing.number && <Text style={[styles.muted, { marginTop: 4 }]}>+{pairing.number}</Text>}
+        </Card>
+        {!!error && <Text style={{ color: colors.danger }}>{error}</Text>}
+        {link && <Button title="Open WhatsApp" onPress={() => Linking.openURL(link)} />}
+        <Button variant="secondary" title="I've sent it" onPress={refresh} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ gap: 10 }}>
+      <Card>
+        <Text style={styles.muted}>Dictate your jobs straight from WhatsApp, Saidpaid drafts the invoices.</Text>
+      </Card>
+      {!!error && <Text style={{ color: colors.danger }}>{error}</Text>}
+      <Button title="Connect WhatsApp" onPress={connect} />
+    </View>
   );
 }
