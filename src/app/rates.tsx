@@ -1,8 +1,12 @@
+import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { Button, Card, Field, SectionTitle, styles } from '../components/ui';
+import { BusinessSwitcher } from '../components/BusinessSwitcher';
+import { Button, Card, colors, Field, SectionTitle, styles } from '../components/ui';
+import { type ImportedRate, importRateCard, isDemoMode, readFileBase64 } from '../lib/api';
+import { localeFor, useT } from '../lib/i18n';
 import { formatMoney, parseMoney } from '../lib/money';
-import { uid } from '../lib/state';
+import { activeBusiness, activeRates, uid } from '../lib/state';
 import { useStore } from '../lib/store';
 import type { Pricing, RateItem, Unit } from '../lib/types';
 
@@ -11,24 +15,45 @@ type Draft = { id: string; name: string; aliases: string; kind: Kind; unit: Unit
 
 const UNITS: Unit[] = ['hour', 'day', 'minute', 'piece'];
 
-function describe(p: Pricing, currency: string): string {
-  const m = (n: number) => formatMoney(n, currency);
-  switch (p.kind) {
-    case 'flat':
-      return m(p.amount);
-    case 'per_unit':
-      return `${m(p.amount)} / ${p.unit}${p.minimum ? ` (min ${m(p.minimum)})` : ''}`;
-    case 'tiers':
-      return p.tiers.map((t) => `${t.upTo == null ? 'over' : `≤${t.upTo} ${p.unit}`}: ${t.amount == null ? 'quote' : m(t.amount)}`).join(' · ');
-    case 'on_quote':
-      return 'On quote';
-  }
-}
-
 export default function RatesScreen() {
   const { state, dispatch } = useStore();
+  const t = useT();
+  const business = activeBusiness(state);
+  const { rateItems, rateOptions } = activeRates(state);
+  const currency = business.currency;
   const [draft, setDraft] = useState<Draft | null>(null);
-  const currency = state.business.currency;
+  const [pdf, setPdf] = useState<{ status: 'idle' | 'reading' | 'error'; message?: string; items?: ImportedRate[] }>({ status: 'idle' });
+
+  const m = (n: number) => formatMoney(n, currency, localeFor(state.uiLanguage));
+  const describe = (p: Pricing): string => {
+    switch (p.kind) {
+      case 'flat':
+        return m(p.amount);
+      case 'per_unit':
+        return `${m(p.amount)} / ${t(p.unit)}${p.minimum ? ` (min ${m(p.minimum)})` : ''}`;
+      case 'tiers':
+        return p.tiers.map((x) => `${x.upTo == null ? t('over') : `≤${x.upTo} ${t(p.unit)}`}: ${x.amount == null ? t('quote') : m(x.amount)}`).join(' · ');
+      case 'on_quote':
+        return t('On quote');
+    }
+  };
+
+  const importPdf = async () => {
+    if (isDemoMode) {
+      setPdf({ status: 'error', message: t('PDF import needs the real AI backend.') });
+      return;
+    }
+    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true, base64: true });
+    if (picked.canceled || !picked.assets[0]) return;
+    setPdf({ status: 'reading' });
+    try {
+      const asset = picked.assets[0];
+      const b64 = asset.base64 ?? (await readFileBase64(asset.uri));
+      setPdf({ status: 'idle', items: await importRateCard(b64, currency) });
+    } catch (e) {
+      setPdf({ status: 'error', message: t(e instanceof Error ? e.message : 'Something went wrong.') });
+    }
+  };
 
   const open = (r?: RateItem) => {
     const p = r?.pricing;
@@ -61,6 +86,7 @@ export default function RatesScreen() {
         item: {
           ...draft.original,
           id: draft.id,
+          businessId: draft.original?.businessId ?? business.id,
           name: draft.name.trim(),
           aliases: draft.aliases.split(',').map((a) => a.trim()).filter(Boolean),
           pricing,
@@ -71,18 +97,18 @@ export default function RatesScreen() {
 
     return (
       <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Field label="Service" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} placeholder="Poster" />
-        <Field label="Other words you use for it (comma separated)" value={draft.aliases} onChangeText={(v) => setDraft({ ...draft, aliases: v })} />
+        <Field label={t('Service')} value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} placeholder="Affiche" />
+        <Field label={t('Other words you use for it (comma separated)')} value={draft.aliases} onChangeText={(v) => setDraft({ ...draft, aliases: v })} />
         {editableKind ? (
           <>
-            <SectionTitle>Pricing</SectionTitle>
+            <SectionTitle>{t('Pricing')}</SectionTitle>
             <View style={[styles.row, { flexWrap: 'wrap', marginBottom: 12 }]}>
               {(['flat', 'per_unit', 'on_quote'] as Kind[]).map((k) => (
                 <Button
                   key={k}
                   small
                   variant={draft.kind === k ? 'primary' : 'secondary'}
-                  title={k === 'flat' ? 'Fixed price' : k === 'per_unit' ? 'Per unit' : 'On quote'}
+                  title={t(k === 'flat' ? 'Fixed price' : k === 'per_unit' ? 'Per unit' : 'On quote')}
                   onPress={() => setDraft({ ...draft, kind: k })}
                 />
               ))}
@@ -90,35 +116,35 @@ export default function RatesScreen() {
             {draft.kind === 'per_unit' && (
               <View style={[styles.row, { flexWrap: 'wrap', marginBottom: 12 }]}>
                 {UNITS.map((u) => (
-                  <Button key={u} small variant={draft.unit === u ? 'primary' : 'secondary'} title={u} onPress={() => setDraft({ ...draft, unit: u })} />
+                  <Button key={u} small variant={draft.unit === u ? 'primary' : 'secondary'} title={t(u)} onPress={() => setDraft({ ...draft, unit: u })} />
                 ))}
               </View>
             )}
             {draft.kind !== 'on_quote' && (
-              <Field label={`Price (${currency})`} value={draft.amount} onChangeText={(v) => setDraft({ ...draft, amount: v })} keyboardType="decimal-pad" />
+              <Field label={t('Price ({currency})', { currency })} value={draft.amount} onChangeText={(v) => setDraft({ ...draft, amount: v })} keyboardType="decimal-pad" />
             )}
             {draft.kind === 'per_unit' && (
-              <Field label="Minimum (optional)" value={draft.minimum} onChangeText={(v) => setDraft({ ...draft, minimum: v })} keyboardType="decimal-pad" />
+              <Field label={t('Minimum (optional)')} value={draft.minimum} onChangeText={(v) => setDraft({ ...draft, minimum: v })} keyboardType="decimal-pad" />
             )}
           </>
         ) : (
           <Card>
-            <Text style={styles.muted}>Priced by length: {describe((draft.original as RateItem).pricing, currency)}</Text>
+            <Text style={styles.muted}>{t('Priced by length: {d}', { d: describe((draft.original as RateItem).pricing) })}</Text>
           </Card>
         )}
         <View style={{ gap: 10 }}>
-          <Button title="Save" onPress={save} disabled={!valid} />
+          <Button title={t('Save')} onPress={save} disabled={!valid} />
           {draft.original && (
             <Button
               variant="danger"
-              title="Delete"
+              title={t('Delete')}
               onPress={() => {
                 dispatch({ type: 'deleteRateItem', id: draft.id });
                 setDraft(null);
               }}
             />
           )}
-          <Button variant="ghost" title="Cancel" onPress={() => setDraft(null)} />
+          <Button variant="ghost" title={t('Cancel')} onPress={() => setDraft(null)} />
         </View>
       </ScrollView>
     );
@@ -126,37 +152,66 @@ export default function RatesScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <BusinessSwitcher label="Rate card" />
       <Text style={[styles.muted, { marginBottom: 12 }]}>
-        Prices only ever come from here or from what you say. When a service is missing, the app asks you.
+        {t('Prices only ever come from here or from what you say. When a service is missing, the app asks you.')}
       </Text>
-      {state.rateItems.map((r) => (
+
+      {pdf.items ? (
+        <Card style={{ borderColor: colors.accent }}>
+          <Text style={[styles.body, { fontWeight: '700', marginBottom: 8 }]}>{t('{n} services found. Check them, then import.', { n: pdf.items.length })}</Text>
+          {pdf.items.map((r, i) => (
+            <View key={i} style={[styles.row, { justifyContent: 'space-between', marginBottom: 4 }]}>
+              <Text style={[styles.body, { flex: 1 }]}>{r.name}</Text>
+              <Text style={styles.muted}>{describe(r.pricing)}</Text>
+            </View>
+          ))}
+          <View style={[styles.row, { marginTop: 10 }]}>
+            <Button
+              small
+              title={t('Import {n} services', { n: pdf.items.length })}
+              onPress={() => {
+                const items = (pdf.items ?? []).map((r) => ({ ...r, id: uid('r_'), businessId: business.id }));
+                dispatch({ type: 'importRateItems', items, options: [] });
+                setPdf({ status: 'idle' });
+              }}
+            />
+            <Button small variant="ghost" title={t('Cancel')} onPress={() => setPdf({ status: 'idle' })} />
+          </View>
+        </Card>
+      ) : null}
+      {pdf.status === 'reading' && <Text style={[styles.muted, { marginBottom: 12 }]}>{t('Reading your rate card…')}</Text>}
+      {pdf.status === 'error' && <Text style={{ color: colors.warn, marginBottom: 12 }}>{pdf.message}</Text>}
+
+      {rateItems.map((r) => (
         <Pressable key={r.id} onPress={() => open(r)}>
           <Card>
             <Text style={[styles.body, { fontWeight: '700' }]}>{r.name}</Text>
-            <Text style={[styles.muted, { marginTop: 4 }]}>{describe(r.pricing, currency)}</Text>
+            <Text style={[styles.muted, { marginTop: 4 }]}>{describe(r.pricing)}</Text>
             {r.clientPricing &&
               Object.entries(r.clientPricing).map(([cid, p]) => (
                 <Text key={cid} style={[styles.muted, { marginTop: 2 }]}>
-                  {state.clients.find((c) => c.id === cid)?.name ?? 'Client'}: {describe(p, currency)}
+                  {state.clients.find((c) => c.id === cid)?.name ?? 'Client'} : {describe(p)}
                 </Text>
               ))}
           </Card>
         </Pressable>
       ))}
-      {state.rateOptions.length > 0 && (
+      {rateOptions.length > 0 && (
         <>
-          <SectionTitle>Add-ons</SectionTitle>
-          {state.rateOptions.map((o) => (
+          <SectionTitle>{t('Add-ons')}</SectionTitle>
+          {rateOptions.map((o) => (
             <Card key={o.id}>
               <Text style={styles.body}>
-                {o.name}: {o.kind === 'percent' ? `+${o.value}%` : `+${formatMoney(o.value, currency)}`}
+                {o.name} : {o.kind === 'percent' ? `+${o.value} %` : `+${m(o.value)}`}
               </Text>
             </Card>
           ))}
         </>
       )}
-      <View style={{ marginTop: 12 }}>
-        <Button title="Add service" onPress={() => open()} />
+      <View style={{ marginTop: 12, gap: 10 }}>
+        <Button title={t('Add service')} onPress={() => open()} />
+        <Button variant="secondary" title={t('Import a rate card (PDF)')} onPress={importPdf} loading={pdf.status === 'reading'} />
       </View>
     </ScrollView>
   );

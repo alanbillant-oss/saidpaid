@@ -5,6 +5,7 @@ import type { Invoice, Mission } from '../types';
 
 const mission = (id: string, clientId: string, unitPrice: number | null, status: Mission['status'] = 'confirmed'): Mission => ({
   id,
+  businessId: demoBusiness.id,
   clientId,
   description: `Mission ${id}`,
   quantity: 1,

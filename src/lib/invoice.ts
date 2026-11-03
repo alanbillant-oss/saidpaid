@@ -39,6 +39,7 @@ export function buildDrafts(
       missionIds: sorted.map((m) => m.id),
       invoice: {
         id: newId(),
+        businessId: business.id,
         number: null,
         clientId,
         issueDate: null,
@@ -58,14 +59,37 @@ export function buildDrafts(
   });
 }
 
-/** Next sequential number, e.g. SP-2026-0007. Numbers are only assigned on issue: no gaps. */
-export function nextInvoiceNumber(existing: Invoice[], prefix: string, year: number): string {
-  const re = new RegExp(`^${prefix}-${year}-(\\d+)$`);
+export const DEFAULT_NUMBER_TEMPLATE = '{prefix}-{year}-{seq:4}';
+
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Next sequential number from a template such as "{prefix}-{year}-{seq:4}" (SP-2026-0007) or
+ * "F{year}-{seq:3}" (taken over from invoices imported from another tool). Without {year} the
+ * sequence never resets. Numbers are only assigned on issue, so the sequence has no gaps.
+ */
+export function nextInvoiceNumber(existing: Invoice[], prefix: string, year: number, template = DEFAULT_NUMBER_TEMPLATE): string {
+  const pad = Number(template.match(/\{seq:(\d+)\}/)?.[1] ?? 1);
+  const filled = (seq: string) =>
+    template.replaceAll('{prefix}', prefix).replaceAll('{year}', String(year)).replace(/\{seq(?::\d+)?\}/, seq);
+  const re = new RegExp('^' + escapeRe(filled('\u0000')).replace('\u0000', '(\\d+)') + '$');
   const max = existing.reduce((m, i) => {
     const hit = i.number?.match(re);
     return hit ? Math.max(m, Number(hit[1])) : m;
   }, 0);
-  return `${prefix}-${year}-${String(max + 1).padStart(4, '0')}`;
+  return filled(String(max + 1).padStart(pad, '0'));
+}
+
+/** Guess the numbering template from existing invoice numbers, e.g. "F2026-0012" -> "F{year}-{seq:4}". */
+export function detectNumberTemplate(numbers: { number: string; year: number }[]): string | null {
+  const parsed = numbers
+    .map((n) => ({ ...n, m: n.number.trim().match(/^(.*?)(\d+)$/) }))
+    .filter((n): n is typeof n & { m: RegExpMatchArray } => !!n.m)
+    .sort((a, b) => a.year - b.year || Number(a.m[2]) - Number(b.m[2]));
+  const last = parsed.at(-1);
+  if (!last) return null;
+  const head = last.m[1].replace(String(last.year), '{year}');
+  return `${head}{seq:${last.m[2].length}}`;
 }
 
 export function issueInvoice(inv: Invoice, all: Invoice[], business: Business, client: Client | undefined, today: string): Invoice {
@@ -73,7 +97,7 @@ export function issueInvoice(inv: Invoice, all: Invoice[], business: Business, c
   const terms = client?.paymentTermsDays ?? business.paymentTermsDays;
   return {
     ...inv,
-    number: nextInvoiceNumber(all, business.invoicePrefix, Number(today.slice(0, 4))),
+    number: nextInvoiceNumber(all, business.invoicePrefix, Number(today.slice(0, 4)), business.numberTemplate),
     issueDate: today,
     dueDate: addDays(today, terms),
     status: 'sent',

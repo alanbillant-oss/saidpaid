@@ -1,6 +1,8 @@
 // POST /functions/v1/capture
 // Body: { text?: string, audio_base64?: string, mime_type?: string, context: CaptureContext }
 // Returns: { transcript: string, items: ExtractedItem[] }
+// With mode: 'transcribe' it only turns the audio into text ({ transcript }), so the freelancer can
+// fix the text before anything is extracted.
 //
 // API keys live only here (Supabase secrets), never in the mobile app.
 import Anthropic from 'npm:@anthropic-ai/sdk@0.133.0';
@@ -23,16 +25,18 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
-  const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!anthropicKey) return json({ error: 'ANTHROPIC_API_KEY is not set on the server.' }, 500);
-
-  let body: { text?: string; audio_base64?: string; mime_type?: string; context?: CaptureContext };
+  let body: { mode?: 'transcribe'; text?: string; audio_base64?: string; mime_type?: string; context?: CaptureContext };
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid JSON body.' }, 400);
   }
-  if (!body.context) return json({ error: 'Missing context.' }, 400);
+  const transcribeOnly = body.mode === 'transcribe';
+  if (transcribeOnly && !body.audio_base64) return json({ error: 'Missing audio.' }, 400);
+  if (!transcribeOnly && !body.context) return json({ error: 'Missing context.' }, 400);
+
+  const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!transcribeOnly && !anthropicKey) return json({ error: 'ANTHROPIC_API_KEY is not set on the server.' }, 500);
 
   try {
     let transcript = (body.text ?? '').trim();
@@ -43,10 +47,11 @@ Deno.serve(async (req) => {
       if (audio.byteLength > MAX_AUDIO_BYTES) return json({ error: 'Voice note too long.' }, 413);
       transcript = await transcribe(audio, body.mime_type ?? 'audio/m4a', deepgramKey);
     }
+    if (transcribeOnly) return json({ transcript });
     if (!transcript) return json({ transcript: '', items: [] });
 
     const client = new Anthropic({ apiKey: anthropicKey });
-    const items = await extractItems(client, transcript, body.context);
+    const items = await extractItems(client, transcript, body.context as CaptureContext);
     return json({ transcript, items });
   } catch (err) {
     console.error(err);

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { formatMoney, parseMoney } from '../lib/money';
+import { useMoney, useT } from '../lib/i18n';
+import { parseMoney } from '../lib/money';
+import { businessById } from '../lib/state';
 import { useStore } from '../lib/store';
 import type { Mission } from '../lib/types';
 import { Badge, Button, colors, styles } from './ui';
@@ -9,7 +11,10 @@ export function MissionCard({ mission }: { mission: Mission }) {
   const { state, dispatch } = useStore();
   const [price, setPrice] = useState('');
   const client = state.clients.find((c) => c.id === mission.clientId);
-  const currency = state.business.currency;
+  const business = businessById(state, mission.businessId);
+  const currency = business.currency;
+  const t = useT();
+  const money = useMoney();
 
   const submitPrice = () => {
     const minor = parseMoney(price);
@@ -28,46 +33,47 @@ export function MissionCard({ mission }: { mission: Mission }) {
       }}
     >
       <View style={[styles.row, { justifyContent: 'space-between' }]}>
-        <Text style={{ fontWeight: '700', color: colors.text, flexShrink: 1 }}>{client?.name ?? 'Unknown client'}</Text>
+        <Text style={{ fontWeight: '700', color: colors.text, flexShrink: 1 }}>{client?.name ?? t('Unknown client')}</Text>
         {mission.status === 'needs_info' ? (
-          <Badge text="Needs a price" tone="warn" />
+          <Badge text={t('Needs a price')} tone="warn" />
         ) : mission.status === 'invoiced' ? (
-          <Badge text="Invoiced" />
+          <Badge text={t('Invoiced')} />
         ) : (
-          <Badge text={mission.priceSource === 'user' ? 'Your price' : 'Rate card'} tone="good" />
+          <Badge text={t(mission.priceSource === 'user' ? 'Your price' : 'Rate card')} tone="good" />
         )}
       </View>
       <Text style={[styles.body, { marginTop: 4 }]}>
         {mission.description}
         {mission.quantity !== 1 ? ` × ${mission.quantity}` : ''}
       </Text>
+      {state.businesses.length > 1 && <Text style={[styles.muted, { fontSize: 12, marginTop: 2, color: business.accentColor }]}>{business.name}</Text>}
       {mission.unitPrice != null && (
         <Text style={{ fontSize: 17, fontWeight: '700', marginTop: 6, color: colors.text }}>
-          {formatMoney(Math.round(mission.unitPrice * mission.quantity), currency)}
+          {money(Math.round(mission.unitPrice * mission.quantity), currency)}
         </Text>
       )}
 
       {mission.status === 'needs_info' && (
         <View style={{ marginTop: 8 }}>
-          <Text style={[styles.muted, { marginBottom: 6 }]}>{mission.question}</Text>
+          <Text style={[styles.muted, { marginBottom: 6 }]}>{mission.question ? t(mission.question) : ''}</Text>
           <View style={styles.row}>
             <TextInput
               value={price}
               onChangeText={setPrice}
-              placeholder={`Price (${currency})`}
+              placeholder={t('Price ({currency})', { currency })}
               keyboardType="decimal-pad"
               onSubmitEditing={submitPrice}
               style={[styles.input, { flex: 1, paddingVertical: 8 }]}
               placeholderTextColor={colors.muted}
             />
-            <Button small title="Set" onPress={submitPrice} disabled={parseMoney(price) == null} />
+            <Button small title={t('Set')} onPress={submitPrice} disabled={parseMoney(price) == null} />
           </View>
         </View>
       )}
 
       {mission.status !== 'invoiced' && (
         <Pressable onPress={() => dispatch({ type: 'deleteMission', id: mission.id })} style={{ marginTop: 8 }}>
-          <Text style={{ color: colors.muted, fontSize: 13 }}>Undo</Text>
+          <Text style={{ color: colors.muted, fontSize: 13 }}>{t('Undo')}</Text>
         </Pressable>
       )}
     </View>

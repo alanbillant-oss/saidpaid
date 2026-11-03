@@ -1,86 +1,79 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
-import { Alert, Platform, ScrollView, Text, View } from 'react-native';
-import { Button, Card, Field, SectionTitle, styles } from '../../components/ui';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Chip } from '../../components/BusinessSwitcher';
+import { Button, Card, colors, SectionTitle, styles } from '../../components/ui';
 import { isBackendConfigured, isDemoMode } from '../../lib/api';
-import { demoBusiness, demoClients, demoRateItems, demoRateOptions } from '../../lib/demo';
+import { confirmAction } from '../../lib/confirm';
+import { demoWorkspace } from '../../lib/demo';
+import { useT } from '../../lib/i18n';
+import { activeBusiness, uid } from '../../lib/state';
 import { useStore } from '../../lib/store';
-import type { Business } from '../../lib/types';
 
 export default function SettingsScreen() {
   const { state, dispatch } = useStore();
-  const b = state.business;
-  const set = (patch: Partial<Business>) => dispatch({ type: 'updateBusiness', patch });
+  const t = useT();
+  const active = activeBusiness(state);
+  const confirm = (title: string, onYes: () => void) => confirmAction(t(title), t('Cancel'), t('Yes'), onYes);
+  const rateCount = state.rateItems.filter((r) => r.businessId === active.id).length;
 
-  const confirm = (title: string, onYes: () => void) => {
-    if (Platform.OS === 'web') {
-      // The hosted demo runs in a frame where confirm() is unavailable.
-      if (isDemoMode || window.confirm(title)) onYes();
-      return;
-    }
-    Alert.alert(title, undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Yes', style: 'destructive', onPress: onYes },
-    ]);
+  const addBusiness = () => {
+    const id = uid('b_');
+    dispatch({ type: 'addBusiness', id });
+    router.push({ pathname: '/business/[id]', params: { id } });
   };
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <SectionTitle>Your business</SectionTitle>
-      <Field label="Name" value={b.name} onChangeText={(v) => set({ name: v })} placeholder="Jane Smith Studio" />
-      <Field label="Address" value={b.address} onChangeText={(v) => set({ address: v })} multiline />
-      <Field label="Email" value={b.email} onChangeText={(v) => set({ email: v })} keyboardType="email-address" autoCapitalize="none" />
-      <View style={styles.row}>
-        <View style={{ flex: 1 }}>
-          <Field label="Currency" value={b.currency} onChangeText={(v) => set({ currency: v.toUpperCase().slice(0, 3) })} autoCapitalize="characters" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="VAT rate (%)"
-            value={String(b.vatRate)}
-            onChangeText={(v) => set({ vatRate: Number(v.replace(',', '.')) || 0 })}
-            keyboardType="decimal-pad"
-          />
-        </View>
-      </View>
-      <Field label="VAT number" value={b.vatNumber ?? ''} onChangeText={(v) => set({ vatNumber: v })} />
-      <Field label="Legal note on invoices" value={b.legalNote} onChangeText={(v) => set({ legalNote: v })} multiline />
-      <Field label="Payment details (bank, IBAN…)" value={b.paymentDetails} onChangeText={(v) => set({ paymentDetails: v })} multiline />
-      <View style={styles.row}>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="Payment terms (days)"
-            value={String(b.paymentTermsDays)}
-            onChangeText={(v) => set({ paymentTermsDays: Number(v) || 0 })}
-            keyboardType="number-pad"
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field label="Invoice prefix" value={b.invoicePrefix} onChangeText={(v) => set({ invoicePrefix: v.replace(/[^A-Za-z0-9]/g, '') })} />
-        </View>
-      </View>
+      <SectionTitle>{t('Companies')}</SectionTitle>
+      {state.businesses.map((b) => (
+        <Pressable key={b.id} onPress={() => router.push({ pathname: '/business/[id]', params: { id: b.id } })}>
+          <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: b.accentColor }} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.body, { fontWeight: '700' }]}>{b.name || t('Unnamed company')}</Text>
+              <Text style={styles.muted}>
+                {[b.legalForm, t(b.template === 'classic' ? 'Classic' : b.template === 'minimal' ? 'Minimal' : 'Bold'), b.id === active.id ? t('active') : '']
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Card>
+        </Pressable>
+      ))}
+      <Button variant="secondary" title={t('Add a company')} onPress={addBusiness} />
 
-      <SectionTitle>Clients and prices</SectionTitle>
+      <SectionTitle>{t('Clients and prices')}</SectionTitle>
       <View style={{ gap: 10 }}>
-        <Button variant="secondary" title={`Clients (${state.clients.length})`} onPress={() => router.push('/clients')} />
-        <Button variant="secondary" title={`Rate card (${state.rateItems.length})`} onPress={() => router.push('/rates')} />
+        <Button variant="secondary" title={t('Clients ({n})', { n: state.clients.length })} onPress={() => router.push('/clients')} />
+        <Button variant="secondary" title={t('Rate card ({n})', { n: rateCount })} onPress={() => router.push('/rates')} />
+        <Button variant="secondary" title={t('Import from facture.net or a spreadsheet')} onPress={() => router.push('/import')} />
       </View>
 
-      <SectionTitle>App</SectionTitle>
+      <SectionTitle>{t('App')}</SectionTitle>
       <Card>
-        <Text style={styles.body}>AI backend: {isBackendConfigured ? 'connected' : 'not configured'}</Text>
-        <Text style={[styles.muted, { marginTop: 4 }]}>Your data is stored on this device for now.</Text>
+        <Text style={styles.label}>{t('Language')}</Text>
+        <View style={[styles.row, { marginBottom: 12 }]}>
+          <Chip label="Français" active={state.uiLanguage === 'fr'} onPress={() => dispatch({ type: 'setLanguage', language: 'fr' })} />
+          <Chip label="English" active={state.uiLanguage === 'en'} onPress={() => dispatch({ type: 'setLanguage', language: 'en' })} />
+        </View>
+        <Text style={styles.body}>
+          {t('AI backend: {state}', { state: t(isBackendConfigured ? 'connected' : isDemoMode ? 'demo' : 'not configured') })}
+        </Text>
+        <Text style={[styles.muted, { marginTop: 4 }]}>{t('Your data is stored on this device for now.')}</Text>
       </Card>
       <View style={{ gap: 10 }}>
         <Button
           variant="secondary"
-          title="Load demo data (317 LAB)"
-          onPress={() =>
-            confirm('Replace your data with the demo workspace?', () =>
-              dispatch({ type: 'reset', state: { business: demoBusiness, clients: demoClients, rateItems: demoRateItems, rateOptions: demoRateOptions } }),
-            )
-          }
+          title={t('Load demo data')}
+          onPress={() => confirm('Replace your data with the demo workspace?', () => dispatch({ type: 'reset', state: { ...demoWorkspace(), uiLanguage: state.uiLanguage } }))}
         />
-        <Button variant="danger" title="Erase all data" onPress={() => confirm('Erase all data on this device?', () => dispatch({ type: 'reset' }))} />
+        <Button
+          variant="danger"
+          title={t('Erase all data')}
+          onPress={() => confirm('Erase all data on this device?', () => dispatch({ type: 'reset', state: { uiLanguage: state.uiLanguage } }))}
+        />
       </View>
     </ScrollView>
   );

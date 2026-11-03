@@ -14,6 +14,8 @@ export type Pricing =
 
 export type RateItem = {
   id: string;
+  /** The company whose rate card this belongs to. */
+  businessId: string;
   name: string;
   aliases: string[];
   pricing: Pricing;
@@ -24,6 +26,7 @@ export type RateItem = {
 /** Add-ons such as "express delivery +30%" or "thumbnail £30". */
 export type RateOption = {
   id: string;
+  businessId: string;
   name: string;
   aliases: string[];
   kind: 'fixed' | 'percent';
@@ -37,13 +40,24 @@ export type Client = {
   aliases: string[];
   email?: string;
   address?: string;
+  /** French company id (9 digits) when known, from the company registry. */
+  siren?: string;
+  vatNumber?: string;
   paymentTermsDays?: number;
 };
 
 export type VolumeDiscount = { minItems: number; percent: number };
 
+export type InvoiceTemplate = 'classic' | 'minimal' | 'bold';
+export type Language = 'fr' | 'en';
+
+/** A company the freelancer invoices from (they can have several: freelance, agency, studio). */
 export type Business = {
+  id: string;
   name: string;
+  /** Legal status shown on invoices, e.g. "Micro-entreprise", "SAS", "Sole trader". */
+  legalForm: string;
+  siren?: string;
   address: string;
   email: string;
   country: string;
@@ -56,7 +70,14 @@ export type Business = {
   paymentDetails: string;
   paymentTermsDays: number;
   invoicePrefix: string;
+  /** Numbering pattern, default "{prefix}-{year}-{seq:4}". Set from imported invoices to continue their series. */
+  numberTemplate?: string;
   volumeDiscounts: VolumeDiscount[];
+  /** Invoice look: layout, accent color and optional logo (data URI). */
+  template: InvoiceTemplate;
+  accentColor: string;
+  logoDataUri?: string;
+  invoiceLanguage: Language;
 };
 
 export type PriceSource = 'user' | 'rate_card' | 'unknown';
@@ -65,6 +86,7 @@ export type MissionStatus = 'needs_info' | 'confirmed' | 'invoiced';
 
 export type Mission = {
   id: string;
+  businessId: string;
   clientId: string;
   description: string;
   quantity: number;
@@ -85,6 +107,7 @@ export type InvoiceStatus = 'draft' | 'sent' | 'paid';
 
 export type Invoice = {
   id: string;
+  businessId: string;
   /** Assigned only when the invoice is issued, so numbering never has gaps. */
   number: string | null;
   clientId: string;

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, type Dispatch, type ReactNode, useContext, useEffect, useReducer, useRef, useState } from 'react';
 import { isDemoMode } from './api';
-import { demoBusiness, demoClients, demoRateItems, demoRateOptions } from './demo';
+import { demoWorkspace } from './demo';
 import { type Action, initialState, reducer, type State } from './state';
 
 // v0 keeps data on the device. The Supabase schema in supabase/migrations is ready for sync.
@@ -19,7 +19,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       .then((raw) => {
         if (raw) dispatch({ type: 'hydrate', state: JSON.parse(raw) });
         else if (isDemoMode)
-          dispatch({ type: 'reset', state: { business: demoBusiness, clients: demoClients, rateItems: demoRateItems, rateOptions: demoRateOptions } });
+          dispatch({ type: 'reset', state: demoWorkspace() });
       })
       .catch((e) => console.warn('Could not load saved data', e))
       .finally(() => {

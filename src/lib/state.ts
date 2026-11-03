@@ -1,8 +1,8 @@
 import { resolveClient } from './clients';
-import { emptyBusiness } from './demo';
+import { emptyBusiness, newBusiness } from './demo';
 import { buildDrafts, issueInvoice } from './invoice';
 import { priceItem } from './pricing';
-import type { Business, Client, ExtractedItem, Invoice, Mission, RateItem, RateOption } from './types';
+import type { Business, Client, ExtractedItem, Invoice, Language, Mission, RateItem, RateOption } from './types';
 
 /** Missions whose client we could not identify, waiting for the freelancer to pick or create one. */
 export type PendingClient = {
@@ -26,7 +26,10 @@ export type ChatEntry = {
 };
 
 export type State = {
-  business: Business;
+  businesses: Business[];
+  /** The company missions are captured for and invoices are drafted from. */
+  activeBusinessId: string;
+  uiLanguage: Language;
   clients: Client[];
   rateItems: RateItem[];
   rateOptions: RateOption[];
@@ -36,7 +39,9 @@ export type State = {
 };
 
 export const initialState: State = {
-  business: emptyBusiness,
+  businesses: [emptyBusiness],
+  activeBusinessId: emptyBusiness.id,
+  uiLanguage: 'fr',
   clients: [],
   rateItems: [],
   rateOptions: [],
@@ -46,7 +51,7 @@ export const initialState: State = {
 };
 
 export type Action =
-  | { type: 'hydrate'; state: State }
+  | { type: 'hydrate'; state: unknown }
   | { type: 'reset'; state?: Partial<State> }
   | { type: 'addChat'; entry: ChatEntry }
   | { type: 'updateChat'; id: string; patch: Partial<ChatEntry> }
@@ -57,7 +62,14 @@ export type Action =
   | { type: 'updateMission'; id: string; patch: Partial<Mission> }
   | { type: 'deleteMission'; id: string }
   | { type: 'addManualMission'; mission: Omit<Mission, 'id'> }
-  | { type: 'updateBusiness'; patch: Partial<Business> }
+  | { type: 'updateBusiness'; id: string; patch: Partial<Business> }
+  | { type: 'addBusiness'; id: string }
+  | { type: 'deleteBusiness'; id: string }
+  | { type: 'setActiveBusiness'; id: string }
+  | { type: 'importRateItems'; items: RateItem[]; options: RateOption[] }
+  | { type: 'setClientPrice'; rateItemId: string; clientId: string; pricing: RateItem['pricing'] | null }
+  | { type: 'setLanguage'; language: Language }
+  | { type: 'importData'; businessId: string; clients: Client[]; rateItems: RateItem[]; invoices: Invoice[]; numberTemplate: string | null }
   | { type: 'upsertClient'; client: Client }
   | { type: 'deleteClient'; id: string }
   | { type: 'upsertRateItem'; item: RateItem }
@@ -68,15 +80,52 @@ export type Action =
   | { type: 'markPaid'; id: string }
   | { type: 'deleteDraft'; id: string };
 
+export function activeBusiness(state: State): Business {
+  return state.businesses.find((b) => b.id === state.activeBusinessId) ?? state.businesses[0] ?? emptyBusiness;
+}
+
+export function businessById(state: State, id: string | undefined): Business {
+  return state.businesses.find((b) => b.id === id) ?? activeBusiness(state);
+}
+
+/** Rate card of the active company only: the same service can have a different price per company. */
+export function activeRates(state: State) {
+  const id = activeBusiness(state).id;
+  return { rateItems: state.rateItems.filter((r) => r.businessId === id), rateOptions: state.rateOptions.filter((o) => o.businessId === id) };
+}
+
+/** Upgrade data saved by v0 (one business, no businessId on records) to the current shape. */
+export function migrate(raw: unknown): State {
+  const s = (raw ?? {}) as Partial<State> & { business?: Partial<Business> };
+  let businesses = s.businesses;
+  if (!businesses?.length) businesses = [{ ...emptyBusiness, ...(s.business ?? {}), id: s.business && 'id' in s.business && s.business.id ? s.business.id : emptyBusiness.id }];
+  businesses = businesses.map((b) => ({ ...emptyBusiness, ...b }));
+  const fallback = businesses[0].id;
+  const withBiz = <T extends { businessId?: string }>(xs: T[] | undefined) => (xs ?? []).map((x) => ({ ...x, businessId: x.businessId ?? fallback }));
+  const { business: _old, ...rest } = s;
+  return {
+    ...initialState,
+    ...rest,
+    businesses,
+    activeBusinessId: businesses.some((b) => b.id === s.activeBusinessId) ? (s.activeBusinessId as string) : fallback,
+    rateItems: withBiz(s.rateItems) as RateItem[],
+    rateOptions: withBiz(s.rateOptions) as RateOption[],
+    missions: withBiz(s.missions) as Mission[],
+    invoices: withBiz(s.invoices) as Invoice[],
+  };
+}
+
 export function uid(prefix = ''): string {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
 function missionsFromItems(state: State, items: ExtractedItem[], clientId: string, captureId: string): Mission[] {
   return items.map((it) => {
-    const line = priceItem(it, clientId, state.rateItems, state.rateOptions);
+    const { rateItems, rateOptions } = activeRates(state);
+    const line = priceItem(it, clientId, rateItems, rateOptions);
     return {
       id: uid('m_'),
+      businessId: activeBusiness(state).id,
       clientId,
       description: line.description,
       quantity: line.quantity,
@@ -97,9 +146,9 @@ function patchChat(chat: ChatEntry[], id: string, patch: Partial<ChatEntry>) {
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'hydrate':
-      return { ...initialState, ...action.state };
+      return migrate(action.state);
     case 'reset':
-      return { ...initialState, ...action.state };
+      return migrate({ ...initialState, ...action.state });
     case 'addChat':
       return { ...state, chat: [...state.chat, action.entry] };
     case 'updateChat':
@@ -187,7 +236,49 @@ export function reducer(state: State, action: Action): State {
       return { ...state, missions: [...state.missions, { ...action.mission, id: uid('m_') }] };
 
     case 'updateBusiness':
-      return { ...state, business: { ...state.business, ...action.patch } };
+      return { ...state, businesses: state.businesses.map((b) => (b.id === action.id ? { ...b, ...action.patch, id: b.id } : b)) };
+    case 'addBusiness':
+      return { ...state, businesses: [...state.businesses, newBusiness(action.id)], activeBusinessId: action.id };
+    case 'deleteBusiness': {
+      // A company that already has missions or invoices is kept: its history must stay intact.
+      const used = state.missions.some((m) => m.businessId === action.id) || state.invoices.some((i) => i.businessId === action.id);
+      if (used || state.businesses.length <= 1) return state;
+      const businesses = state.businesses.filter((b) => b.id !== action.id);
+      return {
+        ...state,
+        businesses,
+        activeBusinessId: state.activeBusinessId === action.id ? businesses[0].id : state.activeBusinessId,
+        rateItems: state.rateItems.filter((r) => r.businessId !== action.id),
+        rateOptions: state.rateOptions.filter((o) => o.businessId !== action.id),
+      };
+    }
+    case 'setActiveBusiness':
+      return state.businesses.some((b) => b.id === action.id) ? { ...state, activeBusinessId: action.id } : state;
+    case 'setLanguage':
+      return { ...state, uiLanguage: action.language };
+    case 'setClientPrice':
+      return {
+        ...state,
+        rateItems: state.rateItems.map((r) => {
+          if (r.id !== action.rateItemId) return r;
+          const clientPricing = { ...(r.clientPricing ?? {}) };
+          if (action.pricing) clientPricing[action.clientId] = action.pricing;
+          else delete clientPricing[action.clientId];
+          return { ...r, clientPricing };
+        }),
+      };
+    case 'importData':
+      return {
+        ...state,
+        clients: [...state.clients, ...action.clients],
+        rateItems: [...state.rateItems, ...action.rateItems],
+        invoices: [...state.invoices, ...action.invoices],
+        businesses: action.numberTemplate
+          ? state.businesses.map((b) => (b.id === action.businessId ? { ...b, numberTemplate: action.numberTemplate ?? undefined } : b))
+          : state.businesses,
+      };
+    case 'importRateItems':
+      return { ...state, rateItems: [...state.rateItems, ...action.items], rateOptions: [...state.rateOptions, ...action.options] };
     case 'upsertClient':
       return {
         ...state,
@@ -209,7 +300,9 @@ export function reducer(state: State, action: Action): State {
       return { ...state, rateItems: state.rateItems.filter((r) => r.id !== action.id) };
 
     case 'createDrafts': {
-      const drafts = buildDrafts(state.missions, state.business, () => uid('i_'));
+      const drafts = state.businesses.flatMap((b) =>
+        buildDrafts(state.missions.filter((m) => m.businessId === b.id), b, () => uid('i_')),
+      );
       if (!drafts.length) return state;
       const owner = new Map(drafts.flatMap((d) => d.missionIds.map((mid) => [mid, d.invoice.id] as const)));
       return {
@@ -227,7 +320,9 @@ export function reducer(state: State, action: Action): State {
       const inv = state.invoices.find((i) => i.id === action.id);
       if (!inv || inv.status !== 'draft' || !inv.lines.length) return state;
       const client = state.clients.find((c) => c.id === inv.clientId);
-      const issued = issueInvoice(inv, state.invoices, state.business, client, action.today);
+      const business = businessById(state, inv.businessId);
+      const sameCompany = state.invoices.filter((i) => i.businessId === business.id);
+      const issued = issueInvoice(inv, sameCompany, business, client, action.today);
       return { ...state, invoices: state.invoices.map((i) => (i.id === inv.id ? issued : i)) };
     }
     case 'markPaid':

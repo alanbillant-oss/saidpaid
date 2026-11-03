@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { demoBusiness, demoClients, demoRateItems, demoRateOptions } from '../demo';
+import { demoBusiness, demoBusiness2, demoClients, demoRateItems, demoRateOptions } from '../demo';
 import { initialState, reducer, type State } from '../state';
 import type { ExtractedItem } from '../types';
 
 const base: State = {
   ...initialState,
-  business: demoBusiness,
+  businesses: [demoBusiness],
+  activeBusinessId: demoBusiness.id,
   clients: demoClients,
   rateItems: demoRateItems,
   rateOptions: demoRateOptions,
@@ -78,5 +79,22 @@ describe('capture flow', () => {
     expect(s.invoices[0]).toMatchObject({ number: 'SP-2026-0001', status: 'sent' });
     s = reducer(s, { type: 'updateInvoice', id, patch: { discountPercent: 50 } });
     expect(s.invoices[0].discountPercent).toBe(0);
+  });
+
+  it('keeps each company on its own rate card and numbering', () => {
+    let s: State = { ...base, businesses: [demoBusiness, demoBusiness2], rateItems: [...demoRateItems] };
+    s = reducer(s, { type: 'setActiveBusiness', id: demoBusiness2.id });
+    s = capture([item({ client_spoken_name: 'Chez Paul', rate_item_id: 'r_shoot' })], s);
+    expect(s.missions[0]).toMatchObject({ businessId: demoBusiness2.id, unitPrice: 45000 });
+    s = reducer(s, { type: 'createDrafts' });
+    s = reducer(s, { type: 'issueInvoice', id: s.invoices[0].id, today: '2026-10-14' });
+    expect(s.invoices[0].number).toBe('SA-2026-0001');
+    expect(reducer(s, { type: 'deleteBusiness', id: demoBusiness2.id }).businesses).toHaveLength(2);
+  });
+
+  it('upgrades data saved by the first version', () => {
+    const s = reducer(initialState, { type: 'hydrate', state: { business: { name: 'Old' }, missions: [{ id: 'm1' }] } });
+    expect(s.businesses[0].name).toBe('Old');
+    expect(s.missions[0].businessId).toBe(s.businesses[0].id);
   });
 });

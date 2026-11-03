@@ -1,5 +1,7 @@
 import type { ExtractedItem, Pricing, PriceSource, RateItem, RateOption } from './types';
 
+// Questions are English keys, translated where they are displayed (src/lib/i18n.ts).
+
 /**
  * Deterministic pricing. The golden rule from the brief: a price always comes from an
  * explicit source (what the freelancer said, or their rate card). The model never guesses.
@@ -18,8 +20,6 @@ export function pricingFor(item: RateItem, clientId: string | null): Pricing {
   return (clientId && item.clientPricing?.[clientId]) || item.pricing;
 }
 
-const UNIT_LABEL: Record<string, string> = { minute: 'min', hour: 'h', day: 'day', piece: 'pc' };
-
 /** Price one base service. Returns the line total in minor units, or a question. */
 export function priceBase(
   pricing: Pricing,
@@ -31,7 +31,7 @@ export function priceBase(
       return { total: pricing.amount * qty, quantity: qty, unitPrice: pricing.amount };
     }
     case 'per_unit': {
-      if (quantity == null) return { question: `How many ${UNIT_LABEL[pricing.unit] ?? pricing.unit}?` };
+      if (quantity == null) return { question: 'How many?' };
       const raw = Math.round(pricing.amount * quantity);
       const total = Math.max(raw, pricing.minimum ?? 0);
       // When the minimum kicks in, bill a single line at the minimum.
@@ -39,7 +39,7 @@ export function priceBase(
       return { total, quantity, unitPrice: pricing.amount };
     }
     case 'tiers': {
-      if (quantity == null) return { question: `How long is it (${UNIT_LABEL[pricing.unit] ?? pricing.unit})?` };
+      if (quantity == null) return { question: 'How long is it?' };
       const tier = pricing.tiers.find((t) => t.upTo == null || quantity <= t.upTo);
       if (!tier || tier.amount == null) return { question: 'This one is on quote. What price?' };
       return { total: tier.amount, quantity: 1, unitPrice: tier.amount };
@@ -87,7 +87,7 @@ export function priceItem(
       quantity: item.quantity ?? 1,
       unitPrice: null,
       priceSource: 'unknown',
-      question: `No price in your rate card for "${item.description}". How much?`,
+      question: 'No price in your rate card for this. How much?',
     };
   }
 
