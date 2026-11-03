@@ -3,3 +3,11 @@ project_id = "saidpaid"
 [functions.capture]
 # Requests must carry a Supabase JWT (the anon key for now, a user session once auth is added).
 verify_jwt = true
+
+[functions.whatsapp]
+# Called by Meta, which cannot send a Supabase JWT. Every request is checked against the
+# X-Hub-Signature-256 HMAC (WHATSAPP_APP_SECRET) instead.
+verify_jwt = false
+
+[functions.whatsapp-link]
+verify_jwt = true

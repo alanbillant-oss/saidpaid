@@ -3,11 +3,13 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { colors } from '../components/ui';
 import { StoreProvider } from '../lib/store';
+import { WhatsAppProvider } from '../lib/whatsappSync';
 
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <StoreProvider>
+        <WhatsAppProvider>
         <StatusBar style="dark" />
         <Stack
           screenOptions={{
@@ -22,6 +24,7 @@ export default function RootLayout() {
           <Stack.Screen name="clients" options={{ title: 'Clients' }} />
           <Stack.Screen name="rates" options={{ title: 'Rate card' }} />
         </Stack>
+        </WhatsAppProvider>
       </StoreProvider>
     </SafeAreaProvider>
   );

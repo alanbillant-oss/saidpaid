@@ -58,6 +58,7 @@ Sans backend configuré, l'app s'ouvre quand même (réglages, clients, grille, 
 | Supabase | Edge Function (et bientôt base de données + auth) | supabase.com → New project |
 | Anthropic | Extraction des missions (Claude) | console.anthropic.com → API Keys |
 | Deepgram | Transcription des vocaux | console.deepgram.com → API Keys |
+| Meta (WhatsApp Business) | Canal WhatsApp (optionnel) | developers.facebook.com, voir « WhatsApp » plus bas |
 
 Crée les comptes au nom de la société si possible (utile pour une revente).
 
@@ -82,9 +83,42 @@ npm run typecheck    # TypeScript
 npm run web          # version web
 ```
 
+## WhatsApp
+
+Tu envoies un vocal (ou un texte) au numéro WhatsApp de Saidpaid, la facture se prépare toute seule.
+
+**Comment ça marche**
+
+1. Dans l'app : Settings → WhatsApp → **Connect WhatsApp**. L'app affiche un code (`SP-K7M3QX`) et ouvre WhatsApp avec le message déjà écrit. Tu l'envoies, le numéro est relié à ton téléphone.
+2. Ensuite chaque vocal ou message passe par le même pipeline que l'app : Deepgram (transcription) → Claude (extraction). Saidpaid te répond sur WhatsApp avec un résumé : client, missions, prix si tu les as dits, doutes éventuels.
+3. Quand tu ouvres l'app, les missions arrivent dans la capture (marquées « via WhatsApp ») et sont chiffrées avec **ta** grille (`src/lib/pricing.ts`), comme d'habitude. Clients inconnus et prix manquants te sont demandés au même endroit.
+
+Tant que les données restent sur le téléphone, le serveur ne garde que le nécessaire : le lien numéro ↔ téléphone, les noms des clients et des prestations (pas les prix) pour que l'IA comprenne, et les messages en attente d'être récupérés par l'app.
+
+Pièces : `supabase/functions/whatsapp` (webhook Meta, signature HMAC vérifiée), `supabase/functions/whatsapp-link` (liaison et synchro appelées par l'app), `supabase/migrations/20261103000000_whatsapp.sql`, `src/lib/whatsapp.ts`, `src/lib/whatsappSync.tsx`.
+
+**Créer le compte WhatsApp Business (à faire une fois, ~30 min)**
+
+1. **business.facebook.com** : crée un portefeuille Meta Business au nom de la société.
+2. **developers.facebook.com** → My Apps → Create app → type **Business** → ajoute le produit **WhatsApp**.
+3. WhatsApp → **API Setup** : ajoute un vrai numéro (un numéro qui n'est pas déjà sur l'app WhatsApp, une puce dédiée ou un fixe qui reçoit les SMS/appels). Note le **Phone number ID**.
+4. **Token permanent** : Business Settings → Users → **System users** → Add (admin) → Generate token pour ton app avec les permissions `whatsapp_business_messaging` et `whatsapp_business_management`.
+5. **App secret** : App settings → Basic → App secret.
+6. Mets les secrets côté serveur (jamais dans l'app ni dans le chat) : remplis la partie WhatsApp de `supabase/functions/.env` puis
+   ```bash
+   npx supabase db push
+   npx supabase secrets set --env-file supabase/functions/.env
+   npx supabase functions deploy whatsapp --no-verify-jwt
+   npx supabase functions deploy whatsapp-link
+   ```
+7. WhatsApp → **Configuration** → Webhook : Callback URL `https://<ton-project-ref>.supabase.co/functions/v1/whatsapp`, Verify token = ta valeur `WHATSAPP_VERIFY_TOKEN`. Puis **Manage** → abonne-toi au champ `messages`.
+8. Passe l'app Meta en mode **Live** (il faudra une URL de politique de confidentialité). En mode test, seuls 5 numéros ajoutés à la main peuvent écrire.
+
+Coût : les réponses de Saidpaid dans les 24 h qui suivent ton message sont gratuites côté Meta. Tu ne paies que Deepgram et Claude par message.
+
 ## Prochaines étapes
 
 1. Auth Supabase + synchro des données (le schéma et les règles RLS sont prêts).
 2. Envoi des factures par email et lien de paiement Stripe (Stripe Connect + Invoicing).
 3. Relances automatiques, cycles de facturation (1er / 15).
-4. Telegram puis WhatsApp comme canaux de capture.
+4. Telegram comme canal de capture. WhatsApp : afficher les prix calculés dans la réponse une fois la grille synchronisée côté serveur.

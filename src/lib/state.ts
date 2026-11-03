@@ -23,6 +23,8 @@ export type ChatEntry = {
   pending?: PendingClient[];
   notes?: string[];
   error?: boolean;
+  /** Where the message came from (the app when unset). */
+  source?: 'whatsapp';
 };
 
 export type State = {

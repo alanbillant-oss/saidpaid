@@ -149,6 +149,7 @@ function ChatBubble({ entry }: { entry: ChatEntry }) {
   if (entry.role === 'user') {
     return (
       <View style={{ alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: colors.userBubble, borderRadius: 16, padding: 12, marginBottom: 10 }}>
+        {entry.source === 'whatsapp' && <Text style={{ color: '#fff', opacity: 0.75, fontSize: 12, marginBottom: 4 }}>via WhatsApp</Text>}
         <Text style={{ color: '#fff', fontSize: 15 }}>{entry.text}</Text>
       </View>
     );
